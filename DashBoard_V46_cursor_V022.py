@@ -792,9 +792,111 @@ elif selected_tab == "종합 분석":
             fig.update_yaxes(title_text="<b>종합 수율 (%)</b>", secondary_y=True, title_font_size=18, tickfont_size=14, range=yield_range)
             fig.update_xaxes(title_text=f"<b>{agg_level.replace('별', '')}</b>", type='category', categoryorder='array', categoryarray=sorted(combo_data['period'].unique()), title_font_size=18, tickfont_size=14)
             st.plotly_chart(fig, use_container_width=True)
+
+
+            # --- 제품군별 종합 실적 분석 ---
             st.divider()
-            st.subheader(f"데이터 원본 ({agg_level} 집계)")
-            st.dataframe(combo_data.rename(columns={'period': agg_level, '총_생산수량': '완제품 제조 개수', '종합수율(%)': '종합수율(%)'}), use_container_width=True)
+            st.subheader(f"{agg_level} 제품군별 완제품 제조 실적 및 종합 수율", anchor=False)
+
+            # 공장 선택 필터
+            pg_all_factories = ['전체'] + sorted(df_yield_orig['공장'].unique())
+            pg_selected_factory = st.selectbox(
+                "분석 공장 선택", 
+                options=pg_all_factories, 
+                key="pg_factory_select",
+                help="제품군별 분석을 수행할 공장을 선택합니다. '전체' 선택 시 모든 공장의 데이터를 종합하여 분석합니다."
+            )
+
+            # 선택된 공장에 따라 데이터 필터링
+            if pg_selected_factory == '전체':
+                df_yield_pg_filtered = df_yield_filt.copy()
+            else:
+                df_yield_pg_filtered = df_yield_filt[df_yield_filt['공장'] == pg_selected_factory].copy()
+            
+            if '신규분류요약' in df_yield_pg_filtered.columns:
+                all_product_groups_pg = sorted(df_yield_pg_filtered['신규분류요약'].dropna().unique())
+
+                if not all_product_groups_pg:
+                    st.warning("선택된 공장에 제품군 데이터가 없습니다.")
+                else:
+                    for group in all_product_groups_pg:
+                        if f"pg_product_group_{group}" not in st.session_state: st.session_state[f"pg_product_group_{group}"] = True
+                    
+                    st.markdown("##### 표시할 제품군 선택")
+                    btn_cols_pg = st.columns(8)
+                    with btn_cols_pg[0]:
+                        if st.button("제품군 전체 선택", key="pg_select_all", use_container_width=True):
+                            for group in all_product_groups_pg: st.session_state[f"pg_product_group_{group}"] = True
+                            st.rerun()
+                    with btn_cols_pg[1]:
+                        if st.button("제품군 전체 해제", key="pg_deselect_all", use_container_width=True):
+                            for group in all_product_groups_pg: st.session_state[f"pg_product_group_{group}"] = False
+                            st.rerun()
+                    
+                    st.write("")
+                    num_cols_pg = 5
+                    cols_pg = st.columns(num_cols_pg)
+                    selected_product_groups_pg = []
+                    for i, group in enumerate(all_product_groups_pg):
+                        with cols_pg[i % num_cols_pg]:
+                            if st.checkbox(group, key=f"pg_product_group_{group}"):
+                                selected_product_groups_pg.append(group)
+                    
+                    combine_pg = st.checkbox("선택항목 합쳐서 보기", key="pg_combine_yield", help="선택한 제품군들의 실적을 합산하여 단일 종합 수율 및 생산 실적 추이를 분석합니다.")
+
+                    if selected_product_groups_pg:
+                        df_resampled_pg = get_resampled_data(df_yield_pg_filtered, agg_level, ['총_생산수량', '총_양품수량'], group_by_cols=['period', '신규분류요약', '공정코드'])
+                        df_resampled_pg_filtered = df_resampled_pg[df_resampled_pg['신규분류요약'].isin(selected_product_groups_pg)]
+
+                        if not df_resampled_pg_filtered.empty:
+                            df_to_plot_pg = pd.DataFrame()
+                            if combine_pg:
+                                bar_combined = df_resampled_pg_filtered[df_resampled_pg_filtered['공정코드'] == '[80] 누수/규격검사'].groupby('period')['총_양품수량'].sum().reset_index().rename(columns={'총_양품수량': '완제품_제조개수'})
+                                
+                                df_yield_combined_base = df_resampled_pg_filtered.groupby(['period', '공정코드']).agg(총_생산수량=('총_생산수량', 'sum'), 총_양품수량=('총_양품수량', 'sum')).reset_index()
+                                with pd.option_context('mode.use_inf_as_na', True): df_yield_combined_base['개별수율'] = (df_yield_combined_base['총_양품수량'] / df_yield_combined_base['총_생산수량']).fillna(1.0)
+                                line_combined = df_yield_combined_base.groupby('period')['개별수율'].prod().reset_index(name='종합수율(%)')
+                                line_combined['종합수율(%)'] *= 100
+                                
+                                df_to_plot_pg = pd.merge(bar_combined, line_combined, on='period', how='outer').fillna(0)
+                                df_to_plot_pg['신규분류요약'] = "선택항목 종합"
+                            else:
+                                bar_data_pg = df_resampled_pg_filtered[df_resampled_pg_filtered['공정코드'] == '[80] 누수/규격검사'].groupby(['period', '신규분류요약'])['총_양품수량'].sum().reset_index().rename(columns={'총_양품수량': '완제품_제조개수'})
+                                
+                                with pd.option_context('mode.use_inf_as_na', True): df_resampled_pg_filtered['개별공정수율'] = (df_resampled_pg_filtered['총_양품수량'] / df_resampled_pg_filtered['총_생산수량']).fillna(1.0)
+                                line_data_pg = df_resampled_pg_filtered.groupby(['period', '신규분류요약'])['개별공정수율'].prod().reset_index(name='종합수율(%)')
+                                line_data_pg['종합수율(%)'] *= 100
+                                
+                                df_to_plot_pg = pd.merge(bar_data_pg, line_data_pg, on=['period', '신규분류요약'], how='outer').sort_values('period').fillna(0)
+
+                            if not df_to_plot_pg.empty:
+                                fig_pg = make_subplots(specs=[[{"secondary_y": True}]])
+                                
+                                colors = px.colors.qualitative.Plotly
+                                group_col = '신규분류요약'
+                                
+                                for i, group_name in enumerate(df_to_plot_pg[group_col].unique()):
+                                    df_group = df_to_plot_pg[df_to_plot_pg[group_col] == group_name]
+                                    color = colors[i % len(colors)]
+                                    
+                                    fig_pg.add_trace(go.Bar(x=df_group['period'], y=df_group['완제품_제조개수'], name=f'{group_name} 완제품', legendgroup=group_name, marker_color=color), secondary_y=False)
+                                    fig_pg.add_trace(go.Scatter(x=df_group['period'], y=df_group['종합수율(%)'], name=f'{group_name} 수율', legendgroup=group_name, mode='lines+markers', line=dict(color=color, dash='dot')), secondary_y=True)
+
+                                factory_title = f"({pg_selected_factory})" if pg_selected_factory != '전체' else '(전체 공장)'
+                                fig_pg.update_layout(height=600, title_text=f'<b>{agg_level} 제품군별 완제품 제조 실적 및 종합 수율 {factory_title}</b>', barmode='group', legend_title_text='범례')
+                                max_bar_val_pg = df_to_plot_pg['완제품_제조개수'].max() if not df_to_plot_pg.empty else 0
+                                fig_pg.update_yaxes(title_text="<b>완제품 제조 개수</b>", secondary_y=False, range=[0, max_bar_val_pg * 1.15]); fig_pg.update_yaxes(title_text="<b>종합 수율 (%)</b>", secondary_y=True, range=[0, 101])
+                                fig_pg.update_xaxes(title_text=f"<b>{agg_level.replace('별', '')}</b>", type='category', categoryorder='array', categoryarray=sorted(df_to_plot_pg['period'].unique()))
+                                st.plotly_chart(fig_pg, use_container_width=True)
+                            else:
+                                st.info("선택된 조건에 해당하는 데이터가 없습니다.")
+                        else:
+                            st.info("선택된 제품군에 대한 데이터가 없습니다.")
+                    else:
+                        st.info("차트를 표시할 제품군을 선택해주세요.")
+            else:
+                st.warning("수율 데이터에 '신규분류요약' 컬럼이 없어 제품군별 분석을 제공할 수 없습니다.")
+
 
 elif selected_tab == "저가동 설비":
     st.header("저가동 설비 분석"); st.info("저가동 설비 데이터는 기간 필터가 적용되지 않고, 로드된 파일의 전체 기간을 기준으로 분석합니다.")
