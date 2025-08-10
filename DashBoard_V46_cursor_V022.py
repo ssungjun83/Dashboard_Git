@@ -744,7 +744,7 @@ elif selected_tab == "종합 분석":
                 slider_min = max(0.0, min_yield_val - buffer)
                 slider_max = min(100.0, max_yield_val + buffer)
                 yield_range = st.slider("종합 수율(%) 축 범위", 0.0, 100.0, (slider_min, slider_max), 1.0, format="%.0f%%", key="overall_yield_range")
-            with control_cols_2[1]: chart_height = st.slider("차트 높이 조절", 400, 1000, 600, 50, key="overall_chart_height")
+            with control_cols_2[1]: chart_height = st.slider("차트 높이 조절", 400, 1000, 700, 50, key="overall_chart_height")
             with control_cols_2[2]: show_labels = st.toggle("차트 라벨 표시", value=True, key="overall_show_labels")
             
             st.markdown(generate_summary_text(combo_data, agg_level, active_factory), unsafe_allow_html=True)
@@ -879,14 +879,27 @@ elif selected_tab == "종합 분석":
                                     df_group = df_to_plot_pg[df_to_plot_pg[group_col] == group_name]
                                     color = colors[i % len(colors)]
                                     
-                                    fig_pg.add_trace(go.Bar(x=df_group['period'], y=df_group['완제품_제조개수'], name=f'{group_name} 완제품', legendgroup=group_name, marker_color=color), secondary_y=False)
-                                    fig_pg.add_trace(go.Scatter(x=df_group['period'], y=df_group['종합수율(%)'], name=f'{group_name} 수율', legendgroup=group_name, mode='lines+markers', line=dict(color=color, dash='dot')), secondary_y=True)
+                                    fig_pg.add_trace(go.Bar(
+                                        x=df_group['period'], y=df_group['완제품_제조개수'], 
+                                        name=f'{group_name} 완제품', legendgroup=group_name, marker_color=color,
+                                        text=df_group['완제품_제조개수'], texttemplate='<b>%{text:,.0f}</b>', textposition='auto',
+                                        textfont=dict(size=18, color='black')
+                                    ), secondary_y=False)
+                                    fig_pg.add_trace(go.Scatter(
+                                        x=df_group['period'], y=df_group['종합수율(%)'], 
+                                        name=f'{group_name} 수율', legendgroup=group_name, 
+                                        mode='lines+markers+text', line=dict(color=color, dash='dot'),
+                                        text=df_group['종합수율(%)'], texttemplate='<b>%{text:.2f}%</b>', textposition='top center',
+                                        textfont=dict(size=16, color='black')
+                                    ), secondary_y=True)
 
                                 factory_title = f"({pg_selected_factory})" if pg_selected_factory != '전체' else '(전체 공장)'
                                 fig_pg.update_layout(height=600, title_text=f'<b>{agg_level} 제품군별 완제품 제조 실적 및 종합 수율 {factory_title}</b>', barmode='group', legend_title_text='범례')
                                 max_bar_val_pg = df_to_plot_pg['완제품_제조개수'].max() if not df_to_plot_pg.empty else 0
                                 fig_pg.update_yaxes(title_text="<b>완제품 제조 개수</b>", secondary_y=False, range=[0, max_bar_val_pg * 1.15]); fig_pg.update_yaxes(title_text="<b>종합 수율 (%)</b>", secondary_y=True, range=[0, 101])
                                 fig_pg.update_xaxes(title_text=f"<b>{agg_level.replace('별', '')}</b>", type='category', categoryorder='array', categoryarray=sorted(df_to_plot_pg['period'].unique()))
+
+                                
                                 st.plotly_chart(fig_pg, use_container_width=True)
                             else:
                                 st.info("선택된 조건에 해당하는 데이터가 없습니다.")
